@@ -1,0 +1,47 @@
+version: '3.8'
+services:
+  api:
+    image: ${DSS_DWH_IMAGE}
+    environment:
+      ORACLE_USER: API_USER
+      ORACLE_DSN: ${ORACLE_DSN}
+      ORACLE_PASSWORD_FILE: /run/secrets/oracle_password
+      API_KEY_FILE: /run/secrets/customer_api_key
+    secrets:
+      - source: oracle_password
+        uid: '10001'
+        gid: '10001'
+        mode: 0400
+      - source: customer_api_key
+        uid: '10001'
+        gid: '10001'
+        mode: 0400
+    ports:
+      - '8000:8000'
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    deploy:
+      replicas: 2
+      placement:
+        preferences:
+          - spread: node.id
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+      update_config:
+        parallelism: 1
+        order: stop-first
+        monitor: 45s
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        order: stop-first
+secrets:
+  oracle_password:
+    external: true
+  customer_api_key:
+    external: true
