@@ -26,13 +26,27 @@ HTTP-сервис на FastAPI для получения признаков на
 
 ### Обработка запроса
 
-```mermaid
-flowchart LR
-    SPR[СПР] -->|HTTP POST| LB[Балансировщик / Swarm routing mesh]
-    LB --> API1[dss-dwh: реплика 1]
-    LB --> API2[dss-dwh: реплика 2]
-    API1 -->|1 соединение| MV[(Oracle: APP.MV_CUSTOMER_DAY)]
-    API2 -->|1 соединение| MV
+```text
+                         ┌─────┐
+                         │ СПР │
+                         └──┬──┘
+                            │ HTTP POST
+              ┌─────────────▼─────────────┐
+              │ Балансировщик /           │
+              │ Swarm routing mesh        │
+              └──────┬───────────┬────────┘
+                     │           │
+           ┌─────────▼──┐   ┌────▼───────┐
+           │ dss-dwh    │   │ dss-dwh    │
+           │ реплика 1  │   │ реплика 2  │
+           └─────────┬──┘   └────┬───────┘
+                     │           │
+                     │ По одному соединению
+                     │           │
+              ┌──────▼───────────▼────────┐
+              │ Oracle                    │
+              │ APP.MV_CUSTOMER_DAY       │
+              └───────────────────────────┘
 ```
 
 Запрос содержит ФИО, телефон, дату и номер заявки. Выбранная реплика выполняет один SQL-запрос к агрегату, преобразует числовые признаки в JSON boolean и возвращает результат. Взаимодействие синхронное. Сервис не хранит заявки и не использует кэш.
@@ -41,18 +55,28 @@ flowchart LR
 
 ### Подготовка данных
 
-```mermaid
-flowchart TD
-    ETL[Существующий процесс ночной загрузки] --> M[(DATAHUB.LADARU_MIRLADA_CUSTOMERS_FILT)]
-    ETL --> G[(DATAHUB.LADA_GUARANTEE20_CUSTOMERS_FILT)]
-    M --> READY[Обе загрузки успешно завершены]
-    G --> READY
-    READY --> REFRESH[Один запуск sql/05_refresh.sql]
-    CAT[(APP.TYPE_CATEGORY)] --> MV[(APP.MV_CUSTOMER_DAY)]
-    M --> MV
-    G --> MV
-    REFRESH -->|COMPLETE, atomic_refresh TRUE| MV
-    REFRESH --> LOG[(APP.CUSTOMER_REFRESH_LOG)]
+```text
+Ночная загрузка источников существующим ETL
+                    │
+          ┌─────────┴──────────┐
+          ▼                    ▼
+      MirLada              Гарантия
+          │                    │
+          └─────────┬──────────┘
+                    ▼
+     Обе загрузки успешно завершены
+                    │
+                    ▼
+       Один запуск sql/05_refresh.sql
+                    │
+           COMPLETE, atomic=TRUE
+                    │
+          ┌─────────┴──────────────────┐
+          ▼                            ▼
+ APP.MV_CUSTOMER_DAY          APP.CUSTOMER_REFRESH_LOG
+          ▲
+          │ Категории
+ APP.TYPE_CATEGORY
 ```
 
 Ночное обновление не запускается из FastAPI. Зависимость от завершения источников настраивается в существующем ETL. До публикации нового результата API читает предыдущий агрегат.
