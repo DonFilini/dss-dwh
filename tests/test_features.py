@@ -107,3 +107,34 @@ def test_cache_days_is_ignored():
     first = FeatureRequest(**payload(cache_days=1))
     second = FeatureRequest(**payload(cache_days=100))
     assert make_binds(first) == make_binds(second)
+
+
+def test_startup_uses_environment_and_one_connection(monkeypatch):
+    captured = {}
+
+    class Pool(FakeDB):
+        closed = False
+
+        def close(self, force=False):
+            self.closed = True
+
+    pool = Pool()
+
+    def create_pool(**kwargs):
+        captured.update(kwargs)
+        return pool
+
+    monkeypatch.setenv('ORACLE_USER', 'test_user')
+    monkeypatch.setenv('ORACLE_PASSWORD', 'test_password')
+    monkeypatch.setenv('ORACLE_DSN', 'test_host/test_service')
+    monkeypatch.setattr(oracledb, 'create_pool', create_pool)
+
+    with TestClient(app) as client:
+        assert client.get('/health/ready').status_code == 200
+
+    assert captured['user'] == 'test_user'
+    assert captured['password'] == 'test_password'
+    assert captured['dsn'] == 'test_host/test_service'
+    assert captured['min'] == captured['max'] == 1
+    assert captured['increment'] == 0
+    assert pool.closed
