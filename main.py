@@ -1,18 +1,14 @@
 import logging
 import os
-import secrets
-import threading
 from contextlib import asynccontextmanager
 from datetime import date as Date
 from datetime import datetime, time, timedelta
 from pathlib import Path
-from typing import Annotated
 
 import oracledb
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 logging.basicConfig(level=os.getenv('LOG_LEVEL', 'INFO'))
@@ -106,21 +102,14 @@ def make_binds(payload: FeatureRequest) -> dict:
     }
 
 
-def read_secret(variable: str, default: str) -> str:
-    value = Path(os.getenv(variable, default)).read_text('utf-8').rstrip('\r\n')
-    if not value:
-        raise RuntimeError(f'Empty secret: {variable}')
-    return value
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    password = read_secret('ORACLE_PASSWORD_FILE', '/run/secrets/oracle_password')
-    app.state.api_key = read_secret('API_KEY_FILE', '/run/secrets/customer_api_key')
-    app.state.db_slots = threading.BoundedSemaphore(2)
+    password = Path(os.getenv(
+        'ORACLE_PASSWORD_FILE', '/run/secrets/oracle_password'
+    )).read_text('utf-8').rstrip('\r\n')
     app.state.pool = oracledb.create_pool(
         user=os.environ['ORACLE_USER'], password=password,
-        dsn=os.environ['ORACLE_DSN'], min=1, max=2, increment=1,
+        dsn=os.environ['ORACLE_DSN'], min=1, max=1, increment=0,
         getmode=oracledb.POOL_GETMODE_TIMEDWAIT, wait_timeout=2000,
         tcp_connect_timeout=5, retry_count=0,
     )
@@ -131,19 +120,6 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title='dss-dwh', version='1.0.0', lifespan=lifespan)
-key_header = APIKeyHeader(name='X-API-Key', auto_error=False)
-
-
-def require_key(
-    request: Request,
-    supplied: Annotated[str | None, Depends(key_header)],
-) -> None:
-    if supplied is None or not secrets.compare_digest(
-        supplied.encode(), request.app.state.api_key.encode()
-    ):
-        raise HTTPException(401, 'Invalid API key')
-
-
 @app.exception_handler(RequestValidationError)
 async def validation_error(request: Request, exc: RequestValidationError):
     # Do not echo personal data from invalid request bodies.
@@ -154,9 +130,6 @@ async def validation_error(request: Request, exc: RequestValidationError):
 
 
 def query(request: Request, sql: str, binds: dict | None = None):
-    slots = request.app.state.db_slots
-    if not slots.acquire(blocking=False):
-        raise HTTPException(503, 'Service busy', headers={'Retry-After': '1'})
     try:
         with request.app.state.pool.acquire() as connection:
             connection.call_timeout = 3000  # Per round trip, not HTTP timeout.
@@ -167,8 +140,6 @@ def query(request: Request, sql: str, binds: dict | None = None):
         error = exc.args[0] if exc.args else None
         logger.error('Oracle failure code=%s', getattr(error, 'full_code', 'UNKNOWN'))
         raise HTTPException(503, 'Data source unavailable') from None
-    finally:
-        slots.release()
 
 
 @app.get('/health/live')
@@ -176,14 +147,13 @@ async def live():
     return {'status': 'ok'}
 
 
-@app.get('/health/ready', dependencies=[Depends(require_key)])
+@app.get('/health/ready')
 def ready(request: Request):
     query(request, 'SELECT 1 FROM app.mv_customer_day WHERE ROWNUM = 1')
     return {'status': 'ready'}
 
 
-@app.post('/v1/customer-features', response_model=FeatureResponse,
-          dependencies=[Depends(require_key)])
+@app.post('/v1/customer-features', response_model=FeatureResponse)
 def features(payload: FeatureRequest, request: Request):
     row = query(request, FEATURE_SQL, make_binds(payload))
     if row is None or len(row) != len(FLAG_NAMES):
