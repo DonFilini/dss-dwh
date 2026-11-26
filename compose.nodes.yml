@@ -1,0 +1,16 @@
+services:
+  api:
+    image: ${DSS_DWH_IMAGE:?Set DSS_DWH_IMAGE}
+    environment:
+      ORACLE_USER: ${ORACLE_USER:?Set ORACLE_USER}
+      ORACLE_PASSWORD: ${ORACLE_PASSWORD:?Set ORACLE_PASSWORD}
+      ORACLE_DSN: ${ORACLE_DSN:?Set ORACLE_DSN}
+    ports:
+      - '8000:8000'
+    restart: unless-stopped
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'

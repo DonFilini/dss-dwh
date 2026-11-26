@@ -3,7 +3,6 @@ import os
 from contextlib import asynccontextmanager
 from datetime import date as Date
 from datetime import datetime, time, timedelta
-from pathlib import Path
 
 import oracledb
 from fastapi import FastAPI, HTTPException, Request
@@ -104,11 +103,8 @@ def make_binds(payload: FeatureRequest) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    password = Path(os.getenv(
-        'ORACLE_PASSWORD_FILE', '/run/secrets/oracle_password'
-    )).read_text('utf-8').rstrip('\r\n')
     app.state.pool = oracledb.create_pool(
-        user=os.environ['ORACLE_USER'], password=password,
+        user=os.environ['ORACLE_USER'], password=os.environ['ORACLE_PASSWORD'],
         dsn=os.environ['ORACLE_DSN'], min=1, max=1, increment=0,
         getmode=oracledb.POOL_GETMODE_TIMEDWAIT, wait_timeout=2000,
         tcp_connect_timeout=5, retry_count=0,

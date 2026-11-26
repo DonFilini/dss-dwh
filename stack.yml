@@ -1,16 +1,11 @@
 version: '3.8'
 services:
   api:
-    image: ${DSS_DWH_IMAGE}
+    image: ${DSS_DWH_IMAGE:?Set DSS_DWH_IMAGE}
     environment:
-      ORACLE_USER: API_USER
-      ORACLE_DSN: ${ORACLE_DSN}
-      ORACLE_PASSWORD_FILE: /run/secrets/oracle_password
-    secrets:
-      - source: oracle_password
-        uid: '10001'
-        gid: '10001'
-        mode: 0400
+      ORACLE_USER: ${ORACLE_USER:?Set ORACLE_USER}
+      ORACLE_PASSWORD: ${ORACLE_PASSWORD:?Set ORACLE_PASSWORD}
+      ORACLE_DSN: ${ORACLE_DSN:?Set ORACLE_DSN}
     ports:
       - '8000:8000'
     stop_grace_period: 20s
@@ -35,6 +30,3 @@ services:
       rollback_config:
         parallelism: 1
         order: stop-first
-secrets:
-  oracle_password:
-    external: true
