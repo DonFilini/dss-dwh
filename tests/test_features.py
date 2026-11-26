@@ -1,4 +1,3 @@
-import threading
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -39,16 +38,13 @@ class FakeDB:
 
 @pytest.fixture
 def client():
-    app.state.api_key = 'test-key'
     app.state.pool = FakeDB()
-    app.state.db_slots = threading.BoundedSemaphore(2)
     # No lifespan: unit tests never open a real Oracle connection.
     yield TestClient(app)
 
 
-def post(client, body=None, key='test-key'):
-    return client.post('/v1/customer-features', json=body or payload(),
-                       headers={'X-API-Key': key})
+def post(client, body=None):
+    return client.post('/v1/customer-features', json=body or payload())
 
 
 def test_inclusive_dates_and_original_identity_values():
@@ -81,30 +77,21 @@ def test_credit_and_guarantee_mapping(client):
     assert result['has_guarant_1day_ago'] is True
 
 
-def test_auth_rejection_does_not_query_database(client):
-    assert post(client, key='wrong').status_code == 401
-    assert not app.state.pool.calls
+def test_readiness_requires_no_api_key(client):
+    assert client.get('/health/ready').status_code == 200
 
 
-def test_outage_returns_503_and_releases_slot(client):
+def test_outage_returns_503_and_recovers(client):
     app.state.pool.fail = True
     assert post(client).status_code == 503
     app.state.pool.fail = False
     assert post(client).status_code == 200
 
 
-def test_overload_returns_503(client):
-    slots = app.state.db_slots
-    slots.acquire()
-    slots.acquire()
-    try:
-        response = post(client)
-        assert response.status_code == 503
-        assert response.headers['Retry-After'] == '1'
-        assert not app.state.pool.calls
-    finally:
-        slots.release()
-        slots.release()
+def test_openapi_has_no_authentication():
+    schema = app.openapi()
+    assert 'securitySchemes' not in schema.get('components', {})
+    assert 'security' not in schema['paths']['/v1/customer-features']['post']
 
 
 def test_invalid_request_does_not_echo_personal_data(client):
